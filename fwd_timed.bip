@@ -1,0 +1,252 @@
+@cpp(src="ext-cpp/utilities.cpp,ext-cpp/helper.cpp,ext-cpp/trace_helper.cpp,ext-cpp/proba_helper.cpp",include="utilities.hpp,trace_helper.hpp,proba_helper.hpp,helper.hpp")
+
+
+package fwd_timed
+
+  extern data type QU
+  extern function printf(string)
+  extern function printf(string, int)
+  extern function printf(string, int, int)
+  extern function bool Q_Check(QU)
+  extern function popq(QU)
+  extern function int getq(QU)
+  extern function add(QU, int)
+  extern function int len(QU)
+
+  extern data type distribution_t
+  
+  extern function int INFINIT()
+  extern function int PERIOD()
+  extern function int MIN(int, int, int, int, int)
+  extern function trace_i(string, int)
+  extern function int select(distribution_t , int)
+  extern function distribution_t init_distribution(string,int)
+  extern function int get_average(distribution_t, int)
+  extern function int MIN(int, int, int, int)
+
+  port type trans(int d)
+  port type trigger()
+  
+  port type TimePort(int d)
+
+
+/***************************************/
+/* Definition of atom type: Producer */
+/***************************************/
+
+  atom type producer()
+
+    data int i, clock, d, c
+
+    export port trans RCV(i)
+    export port TimePort tick(d)
+
+    place START, PROC, _time, stop
+    
+    initial to START, _time do {i=0; clock =0; c=0; d = INFINIT();}
+	
+    on RCV from START to PROC do {c = c+1;}
+    internal from PROC to START provided (c <= 3) do {printf("Prod: received a packet %d \n", i);}
+    internal from START to stop provided (c ==3) do {d =0;}
+
+    on tick from _time to _time provided (d > 0) do { clock = clock + d; d = INFINIT();}  
+
+ 
+
+  end
+
+
+
+/***************************************/
+/* Definition of atom type: Consumer */
+/***************************************/
+
+  atom type consumer(int Ts)
+
+    data int i, clock, d
+
+    export port trans SND(i)
+    export port TimePort tick(d)
+
+    place START, SENDI, time
+    
+    initial to START do {i=1; clock=0; d = Ts; trace_i("Sender.init",clock);}
+
+    on SND from START to SENDI provided (i<4) do {printf("CONS: consumer sending %d \n", i); clock = 0; d = Ts;}
+
+    on tick from SENDI to SENDI provided (d > 0) do {clock =clock+d; d = Ts-clock; trace_i("Sender.clock",clock);}
+    internal from SENDI to START provided (clock == Ts) do {clock = 0; d=Ts; trace_i("Sender.clock",clock); i = i+1;}
+
+    internal from START to time provided (i==4)
+    on tick from time to time provided (d>0) do {trace_i("Sender.extra",d);}
+
+  end
+
+
+/***************************************/
+/* Definition of atom type: Forwarder */
+/***************************************/
+
+  atom type forwarder()
+
+    data int ir, clock, d, size, D
+    data distribution_t distrib
+
+    export port trans RCV(ir)
+    export port trans SND(ir)
+    export port TimePort tick(d)
+
+    place START, PROC, FWD
+    
+    initial to START do {ir=0; clock=0; d=INFINIT(); 
+                      trace_i("fwd.clock.init",clock); 
+		      distrib = init_distribution("/home/siham/bipping/bipnfd/GO/fwd-bip-smc/fwd-bip-smc-timed/ndn-bip-fwd/dist.txt",size);}	
+    
+    on tick from START to START provided (d>0) do {d=INFINIT();}  
+    on RCV from START to PROC do {D =select(distrib,size); d=D; printf("fwd: Picked D=%d and his d=%d \n", D, d);} 
+    on tick from PROC to PROC provided (d>0) do {clock=clock+d; d = D-clock; trace_i("fwd.clock",clock);}
+    internal from PROC to FWD provided (clock == D) do {clock =0; d=INFINIT(); printf("FWD: Processed packet %d \n", ir);} 
+    on SND from FWD to START 
+
+  end
+
+
+
+/***************************************/
+/* Definition of atom type: TxQueue */
+/***************************************/
+
+  atom type TQueue(int qsize)
+
+    data int ir, is, counter, size, clock, d
+    data bool status
+    data QU q
+    export port trans RCV(ir)
+    export port trans SND(is)
+    export port TimePort tick(d)
+    
+    place START, RCVI, ADDQ, DISCARD, STAT, GET, _time
+    
+    initial to START, _time do {ir=0; is=0; counter =0; status = false; d = INFINIT(); clock =0;}
+    on RCV from START to RCVI do { size = len(q);} 
+
+    internal from RCVI to DISCARD provided (size == qsize) do {status = Q_Check(q);}
+    internal from RCVI to ADDQ provided (size < qsize) do {add(q, ir); printf ("Queue received %d \n", ir); status = Q_Check(q);}
+
+    internal from DISCARD to START
+    internal from ADDQ to START
+
+
+    internal from START to GET provided (status == true && is == 0) do {is = getq(q); popq(q); status = Q_Check(q);}
+    internal from GET to START do {status = Q_Check(q);}
+
+
+    on SND from START to STAT provided (is != 0) 
+    internal from STAT to START do {is = 0;}
+
+    on tick from _time to _time provided (d > 0) do { clock = clock + d; d = INFINIT();}
+
+
+  end
+
+
+
+/***************************************/
+/* Definition of atom type: RxQueue */
+/***************************************/
+
+  atom type RQueue(int qsize)
+
+    data int ir, is, counter, size, d, clock
+    data bool status
+    data QU q
+    export port trans RCV(ir)
+    export port trans SND(is)
+    export port TimePort tick(d)
+    
+    place START, RCVI, ADDQ, DISCARD, STAT, GET, _time
+    
+    initial to START, _time do {ir=0; is=0; counter =0; status = false; d = INFINIT(); clock=0;}
+    on RCV from START to RCVI do { size = len(q);} 
+    internal from RCVI to DISCARD provided (size == qsize) do {status = Q_Check(q);}
+    internal from RCVI to ADDQ provided (size < qsize) do {add(q, ir); printf ("Queue received %d \n", ir); status = Q_Check(q);}
+
+    internal from DISCARD to START
+    internal from ADDQ to START
+
+
+    internal from START to GET provided (status == true && is == 0) do {is = getq(q); popq(q); status = Q_Check(q);}
+    internal from GET to START do {status = Q_Check(q);}
+
+
+    on SND from START to STAT provided (is != 0) 
+    internal from STAT to START do {is = 0;}
+
+    on tick from _time to _time provided (d > 0) do { clock = clock + d; d = INFINIT();}
+
+
+  end
+
+/***************************************/
+/* Definition of connectors */
+/***************************************/
+
+  connector type rdv(trans s, trans r)
+    define s r
+    on s r down { r.d = s.d; }
+  end
+
+
+/***************************************/
+/* Definition of connectors */
+/***************************************/
+
+  connector type broad(trans s, trans r)
+    define s' r
+    on s r down { r.d = s.d; }
+  end
+
+
+/**************************************/
+connector type Tick_connected(TimePort t)
+  define t
+  end
+
+/**************************************/
+
+connector type Time(TimePort t1, TimePort t2, TimePort t3, TimePort t4, TimePort t5) 
+  data int delta // agreed time increment
+
+  export port      TimePort time(delta)
+
+  define t1 t2 t3 t4 t5
+  on t1 t2 t3 t4 t5 up   { delta = MIN(t1.d, t2.d, t3.d, t4.d, t5.d); }
+                 down { t1.d = delta; t2.d = delta; t3.d = delta; t4.d = delta; t5.d = delta;}
+
+
+  end
+/***************************************/
+/* Definition of the compound component */
+/***************************************/
+
+  compound type simulation()
+
+    component consumer cons(2)    /** Send every 10 ms **/
+    component producer prod()
+    component TQueue Txpipe(3)
+    component RQueue Rxpipe(3)  
+    component forwarder fwd()
+ 
+
+    connector broad send1(cons.SND, Txpipe.RCV)
+    connector rdv get1(Txpipe.SND, fwd.RCV)
+    connector broad send2(fwd.SND, Rxpipe.RCV)
+    connector rdv get2(Rxpipe.SND, prod.RCV)
+	
+    connector Time time(cons.tick, Txpipe.tick, fwd.tick, Rxpipe.tick, prod.tick)
+    connector Tick_connected TimeClose(time.time)
+
+  end
+
+end
+
